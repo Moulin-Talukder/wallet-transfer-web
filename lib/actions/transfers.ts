@@ -1,7 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { z } from "zod";
 import { apiRequest } from "@/lib/api/client";
 import type { ApiFailure, Transfer } from "@/lib/api/types";
@@ -25,7 +24,7 @@ export async function createTransfer(
   idempotencyKey: string,
 ): Promise<CreateTransferResult> {
   const token = await getSessionToken();
-  if (!token) redirect("/login");
+  if (!token) return { ok: false, error: { kind: "unauthenticated" } };
 
   const validated = toTransferPayload(values);
   if (!validated.ok) {
@@ -54,10 +53,8 @@ export async function createTransfer(
   });
 
   if (!result.ok) {
-    if (result.error.kind === "unauthenticated") {
-      await clearSessionToken();
-      redirect("/login?expired=1");
-    }
+    // The client navigates to /login; redirect() here would reject the awaiting promise.
+    if (result.error.kind === "unauthenticated") await clearSessionToken();
     return { ok: false, error: result.error };
   }
 

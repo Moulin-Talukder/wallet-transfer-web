@@ -7,12 +7,13 @@ import { describeFailure } from "@/lib/errors";
 import { loginSchema, type LoginValues } from "@/lib/login-schema";
 import { clearSessionToken, getSessionToken, setSessionToken } from "@/lib/session";
 
-export type LoginResult = { ok: false; message: string };
+export type LoginResult = { ok: true } | { ok: false; message: string };
 
 /**
  * BFF login: the browser posts credentials to this action, the action exchanges them
  * with Laravel for a token and stores it in an httpOnly cookie. The token is never
- * returned to the browser.
+ * returned to the browser. It returns instead of calling redirect(): the form awaits
+ * it in an event handler, where a redirect would surface as a rejected promise.
  */
 export async function login(values: LoginValues): Promise<LoginResult> {
   const parsed = loginSchema.safeParse(values);
@@ -33,7 +34,7 @@ export async function login(values: LoginValues): Promise<LoginResult> {
   }
 
   await setSessionToken(result.data.token, result.data.expires_at);
-  redirect("/dashboard");
+  return { ok: true };
 }
 
 /** Revokes the token on the API (best effort) and always clears the local session. */

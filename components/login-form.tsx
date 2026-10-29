@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { LoaderCircle } from "lucide-react";
@@ -15,6 +16,7 @@ import { loginSchema, type LoginValues } from "@/lib/login-schema";
 export function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
   const form = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),
     defaultValues: { email: "", password: "" },
@@ -25,13 +27,20 @@ export function LoginForm() {
   const onSubmit = form.handleSubmit((values) => {
     setError(null);
     startTransition(async () => {
+      let result;
       try {
-        // On success the action sets the cookie and redirects, so it only returns on failure.
-        const result = await login(values);
-        if (result && !result.ok) setError(result.message);
+        result = await login(values);
       } catch {
         setError("Can't reach the server. Check your connection and try again.");
+        return;
       }
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      // Next keeps this page alive (hidden) after navigating away; don't leave the password in it.
+      form.reset();
+      router.replace("/dashboard");
     });
   });
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { CircleCheck, Info, LoaderCircle } from "lucide-react";
@@ -51,6 +52,7 @@ export function TransferForm({ sendTransfer, balance, keyStore }: TransferFormPr
   const keys = useRef<IdempotencyKeyStore>(null);
   keys.current ??= keyStore ?? createIdempotencyKeyStore();
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const router = useRouter();
 
   const form = useForm<TransferFormValues>({
     resolver: zodResolver(transferFormSchema),
@@ -69,6 +71,16 @@ export function TransferForm({ sendTransfer, balance, keyStore }: TransferFormPr
     }
     headingRef.current?.focus();
   }, [stepName]);
+
+  // Next keeps visited pages alive in a hidden <Activity>, which runs effect cleanups when
+  // the page is hidden. Without this, "Send money" would reopen on the last success screen.
+  useEffect(() => {
+    if (step.name !== "success") return;
+    return () => {
+      form.reset(EMPTY_VALUES);
+      setStep({ name: "edit" });
+    };
+  }, [step.name, form]);
 
   const review = form.handleSubmit((values) => {
     const validated = toTransferPayload(values);
@@ -89,7 +101,6 @@ export function TransferForm({ sendTransfer, balance, keyStore }: TransferFormPr
     startTransition(async () => {
       try {
         const result = await sendTransfer(values, idempotencyKey);
-        if (!result) return; // The action redirected (session expired).
         if (result.ok) {
           keys.current?.reset();
           setStep({ name: "success", payload, transfer: result.transfer, replayed: result.replayed });
@@ -106,6 +117,10 @@ export function TransferForm({ sendTransfer, balance, keyStore }: TransferFormPr
   }
 
   function handleFailure(failure: ApiFailure) {
+    if (failure.kind === "unauthenticated") {
+      router.replace("/login?expired=1");
+      return;
+    }
     if (failure.kind === "business" && failure.code === "IDEMPOTENCY_KEY_REUSED") {
       keys.current?.reset();
     }
@@ -153,10 +168,10 @@ export function TransferForm({ sendTransfer, balance, keyStore }: TransferFormPr
           </dd>
         </dl>
         <div className="mt-6 flex w-full flex-col gap-2 sm:flex-row">
-          <Button type="button" variant="outline" className="h-11 flex-1" onClick={startOver}>
+          <Button type="button" variant="outline" className="h-11 w-full sm:flex-1" onClick={startOver}>
             Send another
           </Button>
-          <Link href="/dashboard" className={cn(buttonVariants(), "h-11 flex-1")}>
+          <Link href="/dashboard" className={cn(buttonVariants(), "h-11 w-full sm:flex-1")}>
             Back to dashboard
           </Link>
         </div>
@@ -200,7 +215,7 @@ export function TransferForm({ sendTransfer, balance, keyStore }: TransferFormPr
           <Button
             type="button"
             variant="outline"
-            className="h-11 flex-1"
+            className="h-11 w-full sm:flex-1"
             disabled={isPending}
             onClick={() => {
               setError(null);
@@ -211,7 +226,7 @@ export function TransferForm({ sendTransfer, balance, keyStore }: TransferFormPr
           </Button>
           <Button
             type="button"
-            className="h-11 flex-1"
+            className="h-11 w-full sm:flex-1"
             disabled={isPending}
             aria-busy={isPending}
             onClick={send}
