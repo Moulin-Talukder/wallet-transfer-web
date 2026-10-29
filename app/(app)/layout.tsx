@@ -15,12 +15,12 @@ export default function AppLayout({ children }: LayoutProps<"/">) {
         Skip to content
       </a>
       <header className="sticky top-0 z-40 border-b bg-background/85 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-5xl items-center gap-2 px-4">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-2 gap-y-1 px-4 py-2 sm:h-14 sm:flex-nowrap sm:py-0">
           <Link href="/dashboard" className="mr-auto rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50 sm:mr-4">
             <Brand />
           </Link>
-          <NavLinks />
-          <div className="flex items-center gap-1 sm:ml-auto">
+          <NavLinks className="order-last w-full sm:order-none sm:w-auto" />
+          <div className="ml-auto flex items-center gap-1">
             <Suspense>
               <UserName />
             </Suspense>

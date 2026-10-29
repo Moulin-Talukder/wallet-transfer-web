@@ -22,9 +22,17 @@ export default function DashboardPage() {
         </Suspense>
 
         <section aria-labelledby="recent-heading" className="rounded-2xl bg-card px-4 py-4 ring-1 ring-foreground/10 sm:px-5">
-          <h2 id="recent-heading" className="font-semibold">
-            Recent transfers
-          </h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 id="recent-heading" className="font-semibold">
+              Recent transfers
+            </h2>
+            <Link
+              href="/transfers"
+              className="rounded-md text-sm font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              View all<span className="sr-only"> transfers</span>
+            </Link>
+          </div>
           <Suspense fallback={<TransferListSkeleton rows={RECENT_COUNT} />}>
             <RecentTransfers />
           </Suspense>
