@@ -136,7 +136,8 @@ balance and transfers stream into `<Suspense>` boundaries. Balances are never ca
 ## Bugs found by browser testing
 
 The code compiled, passed type checking and linting, and looked right on review. Walking through every flow in a real
-browser (Playwright, at 375px and 1440px) found three bugs that none of those checks catch:
+browser (Playwright, at 375px and 1440px), and later looking closely at the README screenshots, found five bugs that none
+of those checks catch:
 
 1. **`redirect()` inside a Server Action called from an event handler.** Login originally called `redirect("/dashboard")`
    in the action. When the form awaits an action from a click handler, the redirect reaches the client as a *rejected promise*,
@@ -152,8 +153,15 @@ browser (Playwright, at 375px and 1440px) found three bugs that none of those ch
    and long transfer rows set its minimum width (`grid-cols-1` is `minmax(0, 1fr)`). The review buttons collapsed to
    about 20px tall, because `flex-1` in a column layout sets their height basis to 0. "Send money" wrapped in the header.
 
+4. **The taka sign (৳) rendered small and misaligned.** Geist has no ৳ glyph, so the browser fell back to a system font.
+   **Fix:** Noto Sans Bengali as a fallback font, loaded through `next/font` for the Bengali `unicode-range` only, so it renders just that glyph.
+
+5. **Every transfer row showed the same reference.** The list showed the first 8 characters of each reference, but the API
+   uses UUIDv7, whose leading characters are a timestamp, so transfers made in the same minute looked identical.
+   **Fix:** show the last 8 characters, which are random.
+
 Each fix was confirmed with the same browser walkthrough: no stale error after login, an empty password field after logout,
-a fresh form when reopening "Send money", and a page exactly 375px wide.
+a fresh form when reopening "Send money", and a page exactly 375px wide. Fixes 4 and 5 were confirmed by re-capturing the screenshots.
 
 ## Tests
 
