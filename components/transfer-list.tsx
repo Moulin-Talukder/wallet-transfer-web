@@ -60,8 +60,9 @@ function TransferRow({ transfer }: { transfer: Transfer }) {
           <time dateTime={transfer.created_at}>{formatDateTime(transfer.created_at)}</time>
           <span aria-hidden="true"> · </span>
           <span className="sr-only">, reference </span>
+          {/* References are UUIDv7: the leading characters are a timestamp, the tail is random. */}
           <span className="font-mono" title={transfer.reference}>
-            {transfer.reference.slice(0, 8)}
+            …{transfer.reference.slice(-8)}
           </span>
         </p>
       </div>
