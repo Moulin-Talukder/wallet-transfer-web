@@ -1,36 +1,222 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# wallet-transfer-web
 
-## Getting Started
+A Next.js frontend for [laravel-wallet-transfer-api](https://github.com/Moulin-Talukder/laravel-wallet-transfer-api): sign in, check your balance, and send money to another wallet, safely and exactly once.
 
-First, run the development server:
+> **This is a standalone portfolio sample.** It is not employer or client code.
+> It was built with [Claude Code](https://claude.com/claude-code) as an AI pair programmer. I reviewed every change,
+> and verified it with unit and component tests, deliberately broken code to prove the tests can fail,
+> and browser testing at 375px and 1440px, which found the bugs described [below](#bugs-found-by-browser-testing).
+
+| Desktop | Mobile |
+|---|---|
+| ![Dashboard on desktop](docs/screenshots/dashboard-desktop.png) | ![Dashboard on mobile](docs/screenshots/dashboard-mobile.png) |
+
+## Stack
+
+- Next.js 16 (App Router, Cache Components, `proxy.ts`), React 19, TypeScript (strict)
+- Tailwind CSS 4 and shadcn/ui
+- react-hook-form + zod (schemas shared by the browser and the server)
+- Vitest + React Testing Library; Playwright for screenshots
+
+## Running it with the API
+
+You need PHP 8.3+, Composer and Node.js 22.12+ (required by Vitest; developed on Node 24).
+
+**1. The API** (in another directory):
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone https://github.com/Moulin-Talukder/laravel-wallet-transfer-api.git
+cd laravel-wallet-transfer-api
+composer install
+cp .env.example .env
+php artisan key:generate
+php artisan migrate --seed   # alice@example.com (10,000 BDT) and bob@example.com (2,500 BDT), password "password"
+php artisan serve            # http://127.0.0.1:8000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+**2. This app:**
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm install
+cp .env.example .env.local   # API_URL=http://127.0.0.1:8000
+npm run dev                  # http://localhost:3000
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Sign in as `alice@example.com` / `password` and send money to `bob@example.com`.
 
-## Learn More
+The browser never calls the API directly (see below), so the API's CORS setting (`FRONTEND_URL`) doesn't matter for this app.
 
-To learn more about Next.js, take a look at the following resources:
+### Scripts
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Command | What it does |
+|---|---|
+| `npm run dev` | Development server |
+| `npm run build && npm start` | Production build and server |
+| `npm test` | Unit and component tests (Vitest) |
+| `npm run lint` | ESLint |
+| `npm run typecheck` | Regenerates Next route types, then `tsc --noEmit` |
+| `node scripts/capture-screenshots.mjs` | Recreates `docs/screenshots` from a running production build (see the script header) |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Design decisions
 
-## Deploy on Vercel
+### The token never reaches the browser (BFF pattern)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The Laravel API issues a Sanctum bearer token. Storing it in `localStorage` would make it readable by any script
+on the page, so a single XSS bug would leak it. Instead, the Next.js server acts as a *backend for the frontend*:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+Browser ──(Server Action / page request + httpOnly cookie)──▶ Next.js server ──(Bearer token)──▶ Laravel API
+```
+
+- **Login** is a Server Action. It sends the credentials to `POST /api/login`, stores the token in a cookie,
+  and returns only `{ ok: true }`. The browser never sees the token.
+- **The cookie** (`wt_session`) is `httpOnly` (no JavaScript access), `sameSite=lax` (not sent on cross-site POSTs),
+  `secure` in production, and expires together with the token (24 hours, from the API's `expires_at`).
+- **Server Components** read the cookie and fetch the balance and transfers on the server
+  ([`lib/dal.ts`](lib/dal.ts)). [`lib/api/client.ts`](lib/api/client.ts) imports `server-only`,
+  so importing it from client code is a build error.
+- **Server Actions** are reachable by anyone who can send a POST, so `createTransfer` validates its input again with
+  the same zod schema the form uses. Next.js checks the `Origin` header of every action (CSRF protection).
+- **[`proxy.ts`](proxy.ts)** (Next 16's new name for middleware) redirects requests without a session cookie to
+  `/login`. This is only an optimistic check: Laravel validates the token on every request.
+- **On a 401** (expired or revoked token) the cookie must be cleared. Server Components are not allowed to modify cookies,
+  so a page that gets a 401 redirects to [`/auth/expired`](app/auth/expired/route.ts), a Route Handler that clears
+  the cookie and redirects to `/login?expired=1`. Server Actions clear the cookie themselves.
+
+### Money is an integer, from input to API
+
+Amounts are integer **paisa** (1 BDT = 100 paisa), as in the API. The amount field is a text input
+(`inputMode="decimal"` for the phone keypad), and [`parseBdtToPaisa`](lib/money.ts) converts `"1,500.50"` to `150050`
+with string and integer math only: `0.29 * 100` is `28.999999999999996` in floating point. More than 2 decimals,
+negatives, exponents and misplaced commas are rejected rather than guessed. `formatPaisa(150000)` gives `৳1,500.00`.
+
+### Idempotency on the client
+
+The API deduplicates transfers by the `Idempotency-Key` header. The client's job is to send **the same key for the same
+payment attempt**, and a new key for a new one ([`lib/idempotency.ts`](lib/idempotency.ts)):
+
+- The key is created when the user first clicks **Send** and is bound to the payload (receiver + amount).
+- Every retry of that payload reuses it: after a network error, a timeout, a 500, a 429, or after going back to "Edit details" without changing anything.
+  If the first request actually succeeded and only the response was lost, the retry returns the original transfer
+  (`200`, `Idempotent-Replayed: true`) and the success screen says so. **The user is never charged twice.**
+- A new key is created only after a success, or when the receiver or amount changes.
+- Double clicks are stopped three times over: the button is disabled while the request is in flight, a `ref` guard drops a second
+  click in the same frame (before React re-renders), and Next.js runs Server Actions one at a time per client,
+  so even a second request would arrive later with the same key and be a replay.
+- `crypto.randomUUID()` only exists in secure contexts, so there is a `getRandomValues()` fallback for testing on a phone over plain HTTP.
+
+### Errors are mapped once
+
+[`toApiFailure`](lib/api/parse.ts) turns every Laravel response into one typed union (`validation`, `business` + code,
+`unauthenticated`, `forbidden`, `rate_limited` + Retry-After, `network`, `server`). The UI branches on that,
+never on status numbers or message strings:
+
+| API response | What the user sees |
+|---|---|
+| 422 `INSUFFICIENT_BALANCE` | "Your balance is too low for this transfer. Try a smaller amount." |
+| 422 `SAME_WALLET` | "You can't send money to yourself." |
+| 422 `RECEIVER_UNAVAILABLE` | "This account can't receive transfers right now." |
+| 422 `SENDER_FROZEN`, 403 | "Sending money is disabled on your wallet. Please contact support." |
+| 422 `IDEMPOTENCY_KEY_REUSED` | "Review the transfer and send it again." (and the key is rotated) |
+| 422 field errors | Shown under the matching form field, e.g. "We couldn't find an account with that email." |
+| 429 + `Retry-After: 42` | "Please wait 42 seconds and try again." |
+| Network error, timeout, 5xx | "We couldn't confirm the transfer. Trying again is safe: you won't be charged twice." |
+
+### Accessibility
+
+Labels on every input, visible focus rings, a skip link, `aria-current` in the nav, and `aria-invalid` +
+`aria-describedby` on invalid fields. Field errors live in always-present `aria-live` regions, so screen readers announce them,
+and alerts use `role="alert"`. Focus moves to each step's heading (edit → review → success) and to the first invalid field.
+
+### Streaming instead of spinners
+
+With Cache Components, each page is a *partial prerender*: the header, headings and skeletons are static HTML, and the
+balance and transfers stream into `<Suspense>` boundaries. Balances are never cached.
+
+## Bugs found by browser testing
+
+The code compiled, passed type checking and linting, and looked right on review. Walking through every flow in a real
+browser (Playwright, at 375px and 1440px) found three bugs that none of those checks catch:
+
+1. **`redirect()` inside a Server Action called from an event handler.** Login originally called `redirect("/dashboard")`
+   in the action. When the form awaits an action from a click handler, the redirect reaches the client as a *rejected promise*,
+   so the form's `catch` block put a "Can't reach the server" error into the (now hidden) login page, right after a
+   successful login. **Fix:** actions called from event handlers return a result, and the client navigates with
+   `router.replace()`. The logout button is a plain `<form action>`, where Next.js handles `redirect()` natively.
+
+2. **Next.js keeps visited pages mounted in a hidden `<Activity>`.** After login, the password was still in the hidden login form's
+   DOM, and the transfer page reopened on the previous "Transfer sent" screen. **Fix:** the login form resets itself
+   before navigating, and the transfer form resets in an effect cleanup, which React runs when the page is hidden.
+
+3. **Mobile layout at 375px.** The dashboard scrolled sideways by 7px, because a single-column grid track defaults to `auto`
+   and long transfer rows set its minimum width (`grid-cols-1` is `minmax(0, 1fr)`). The review buttons collapsed to
+   about 20px tall, because `flex-1` in a column layout sets their height basis to 0. "Send money" wrapped in the header.
+
+Each fix was confirmed with the same browser walkthrough: no stale error after login, an empty password field after logout,
+a fresh form when reopening "Send money", and a page exactly 375px wide.
+
+## Tests
+
+```bash
+npm test   # 96 tests
+```
+
+- **Unit:** paisa ↔ BDT formatting and parsing ([`money.test.ts`](lib/money.test.ts)), form schema limits,
+  Laravel response parsing and Retry-After, the message for every error code ([`errors.test.ts`](lib/errors.test.ts)),
+  and idempotency key reuse and rotation ([`idempotency.test.ts`](lib/idempotency.test.ts)).
+- **Component** ([`transfer-form.test.tsx`](components/transfer-form.test.tsx)): validation, the disabled state while submitting
+  (a double click calls the action once), every error type shown to the user, and key reuse through the real UI:
+  network error → 429 → success sends `key-1` three times; changing the amount sends `key-2`.
+
+To check that the tests can fail, I broke the code three times and confirmed the matching tests failed:
+a key store that always creates a new key, removing the in-flight guard and disabled state, and showing raw server
+messages instead of the mapped ones.
+
+## Security notes
+
+- The token lives only in an `httpOnly` cookie and on the Next.js server; nothing is stored in `localStorage`.
+- `API_URL` is a server-only environment variable (no `NEXT_PUBLIC_` prefix). `.env.local` is git-ignored; `.env.example` is committed.
+- `npm audit` reports 3 low-severity advisories for `deepmerge` (prototype poisoning), pulled in by the **shadcn CLI**
+  (`shadcn` → `@shadcn/registry` → `deepmerge`). This is build tooling used to add components. It never runs in the
+  app and is not part of the browser bundle. `npm audit fix --force` would downgrade shadcn to 1.0, so it is left as is.
+
+## Known limitations
+
+- **Login rate limiting behind the BFF.** The API limits logins per email *and IP address*. All requests now come from the
+  Next.js server's IP, so the limit is effectively per email, shared by everyone: 5 wrong passwords lock that email out
+  for a minute. The fix is to forward the client IP in `X-Forwarded-For` and configure trusted proxies in Laravel.
+- **No counterparty in the transfer list.** The API's transfer resource doesn't include the other party's email,
+  so rows show the direction, amount, date and reference.
+- **Full transfer history with pagination** and an end-to-end test are planned next.
+
+## Project structure
+
+```
+app/
+  login/                  sign-in page
+  (app)/                  authenticated shell: header, nav, logout, error boundary
+    dashboard/            balance + 5 most recent transfers
+    transfers/new/        send money (edit → review → success)
+  auth/expired/route.ts   clears the cookie after a 401
+components/               BalanceCard, AmountInput, TransferForm, TransferList,
+                          TransferStatusBadge, ErrorAlert, LoginForm, ...
+lib/
+  actions/                Server Actions (login, logout, createTransfer)
+  api/                    server-only API client, response types and error parsing
+  dal.ts                  data access for Server Components
+  money.ts                paisa ↔ BDT
+  idempotency.ts          one Idempotency-Key per payment attempt
+  errors.ts               ApiFailure → user-facing message
+proxy.ts                  redirects requests without a session to /login
+```
+
+## Screenshots
+
+Captured from the production build with [`scripts/capture-screenshots.mjs`](scripts/capture-screenshots.mjs).
+
+| | Desktop (1440px) | Mobile (375px) |
+|---|---|---|
+| Sign in | ![Sign in, desktop](docs/screenshots/login-desktop.png) | ![Sign in, mobile](docs/screenshots/login-mobile.png) |
+| Dashboard | ![Dashboard, desktop](docs/screenshots/dashboard-desktop.png) | ![Dashboard, mobile](docs/screenshots/dashboard-mobile.png) |
+| Review | ![Review transfer, desktop](docs/screenshots/review-desktop.png) | ![Review transfer, mobile](docs/screenshots/review-mobile.png) |
+| Success | ![Transfer sent, desktop](docs/screenshots/success-desktop.png) | ![Transfer sent, mobile](docs/screenshots/success-mobile.png) |
