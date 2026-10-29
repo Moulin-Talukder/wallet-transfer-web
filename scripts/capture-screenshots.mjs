@@ -80,6 +80,12 @@ async function capture(browser, viewport) {
   await page.mouse.move(0, 0);
   await shot("success");
 
+  await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "History" }).click();
+  // The skeleton also renders list items, so wait for the loaded summary line instead.
+  await page.getByText(/transfers, newest first/).waitFor();
+  await page.mouse.move(0, 0);
+  await shot("history");
+
   await context.close();
 }
 
