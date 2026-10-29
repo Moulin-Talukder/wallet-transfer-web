@@ -5,7 +5,7 @@ A Next.js frontend for [laravel-wallet-transfer-api](https://github.com/Moulin-T
 > **This is a standalone portfolio sample.** It is not employer or client code.
 > It was built with [Claude Code](https://claude.com/claude-code) as an AI pair programmer. I reviewed every change,
 > and verified it with unit and component tests, deliberately broken code to prove the tests can fail,
-> and browser testing at 375px and 1440px, which found the bugs described [below](#bugs-found-by-browser-testing).
+> an end-to-end test, and browser testing at 375px and 1440px, which found the bugs described [below](#bugs-found-by-browser-testing).
 
 | Desktop | Mobile |
 |---|---|
@@ -16,7 +16,7 @@ A Next.js frontend for [laravel-wallet-transfer-api](https://github.com/Moulin-T
 - Next.js 16 (App Router, Cache Components, `proxy.ts`), React 19, TypeScript (strict)
 - Tailwind CSS 4 and shadcn/ui
 - react-hook-form + zod (schemas shared by the browser and the server)
-- Vitest + React Testing Library; Playwright for screenshots
+- Vitest + React Testing Library; Playwright for the end-to-end test and screenshots
 
 ## Running it with the API
 
@@ -53,6 +53,7 @@ The browser never calls the API directly (see below), so the API's CORS setting 
 | `npm run dev` | Development server |
 | `npm run build && npm start` | Production build and server |
 | `npm test` | Unit and component tests (Vitest) |
+| `npm run test:e2e` | End-to-end test (Playwright); needs the API running |
 | `npm run lint` | ESLint |
 | `npm run typecheck` | Regenerates Next route types, then `tsc --noEmit` |
 | `node scripts/capture-screenshots.mjs` | Recreates `docs/screenshots` from a running production build (see the script header) |
@@ -152,6 +153,7 @@ of those checks catch:
 3. **Mobile layout at 375px.** The dashboard scrolled sideways by 7px, because a single-column grid track defaults to `auto`
    and long transfer rows set its minimum width (`grid-cols-1` is `minmax(0, 1fr)`). The review buttons collapsed to
    about 20px tall, because `flex-1` in a column layout sets their height basis to 0. "Send money" wrapped in the header.
+   Later, adding a third nav link (History) made the header 438px wide; on phones the nav now wraps onto its own row of tabs.
 
 4. **The taka sign (৳) rendered small and misaligned.** Geist has no ৳ glyph, so the browser fell back to a system font.
    **Fix:** Noto Sans Bengali as a fallback font, loaded through `next/font` for the Bengali `unicode-range` only, so it renders just that glyph.
@@ -166,19 +168,25 @@ a fresh form when reopening "Send money", and a page exactly 375px wide. Fixes 4
 ## Tests
 
 ```bash
-npm test   # 96 tests
+npm test           # 107 unit and component tests
+npm run test:e2e   # end-to-end test; start the API first
 ```
 
 - **Unit:** paisa ↔ BDT formatting and parsing ([`money.test.ts`](lib/money.test.ts)), form schema limits,
   Laravel response parsing and Retry-After, the message for every error code ([`errors.test.ts`](lib/errors.test.ts)),
-  and idempotency key reuse and rotation ([`idempotency.test.ts`](lib/idempotency.test.ts)).
+  idempotency key reuse and rotation ([`idempotency.test.ts`](lib/idempotency.test.ts)), and the `?page=` parameter.
 - **Component** ([`transfer-form.test.tsx`](components/transfer-form.test.tsx)): validation, the disabled state while submitting
   (a double click calls the action once), every error type shown to the user, and key reuse through the real UI:
   network error → 429 → success sends `key-1` three times; changing the amount sends `key-2`.
+- **End-to-end** ([`e2e/send-money.spec.ts`](e2e/send-money.spec.ts)): against the production build and the real API, at 1440px and 375px.
+  It signs in, sends a random amount to Bob through the review step, finds the reference from the success screen as the
+  newest row in the history, and checks that the balance dropped by exactly that amount. Playwright builds and starts the app on port 3100;
+  the Laravel API must already be running.
 
 To check that the tests can fail, I broke the code three times and confirmed the matching tests failed:
 a key store that always creates a new key, removing the in-flight guard and disabled state, and showing raw server
-messages instead of the mapped ones.
+messages instead of the mapped ones. For the end-to-end test, I made the server action send 1 paisa more than the user
+entered; the test failed on the history row (expected ৳92.45, found ৳92.46).
 
 ## Security notes
 
@@ -195,7 +203,6 @@ messages instead of the mapped ones.
   for a minute. The fix is to forward the client IP in `X-Forwarded-For` and configure trusted proxies in Laravel.
 - **No counterparty in the transfer list.** The API's transfer resource doesn't include the other party's email,
   so rows show the direction, amount, date and reference.
-- **Full transfer history with pagination** and an end-to-end test are planned next.
 
 ## Project structure
 
@@ -204,6 +211,7 @@ app/
   login/                  sign-in page
   (app)/                  authenticated shell: header, nav, logout, error boundary
     dashboard/            balance + 5 most recent transfers
+    transfers/            full history, 20 per page (?page=2)
     transfers/new/        send money (edit → review → success)
   auth/expired/route.ts   clears the cookie after a 401
 components/               BalanceCard, AmountInput, TransferForm, TransferList,
@@ -215,6 +223,7 @@ lib/
   money.ts                paisa ↔ BDT
   idempotency.ts          one Idempotency-Key per payment attempt
   errors.ts               ApiFailure → user-facing message
+e2e/                      Playwright end-to-end test
 proxy.ts                  redirects requests without a session to /login
 ```
 
@@ -228,3 +237,4 @@ Captured from the production build with [`scripts/capture-screenshots.mjs`](scri
 | Dashboard | ![Dashboard, desktop](docs/screenshots/dashboard-desktop.png) | ![Dashboard, mobile](docs/screenshots/dashboard-mobile.png) |
 | Review | ![Review transfer, desktop](docs/screenshots/review-desktop.png) | ![Review transfer, mobile](docs/screenshots/review-mobile.png) |
 | Success | ![Transfer sent, desktop](docs/screenshots/success-desktop.png) | ![Transfer sent, mobile](docs/screenshots/success-mobile.png) |
+| History | ![Transfer history, desktop](docs/screenshots/history-desktop.png) | ![Transfer history, mobile](docs/screenshots/history-mobile.png) |
